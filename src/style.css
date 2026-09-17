@@ -9,6 +9,8 @@
   --muted: #9fb3a8;
   --serve: #f5c542;
   --serve-text: #1a1400;
+  --swap: #ef5350;
+  --swap-text: #2a0b0b;
   --danger: #3a1d1d;
   color-scheme: dark;
 }
@@ -189,13 +191,14 @@ body {
 
 .side-change {
   position: absolute;
+  z-index: 5;
   width: 5.5rem;
   min-height: 2.75rem;
   padding: 0.3rem 0.5rem;
   border-radius: 0.75rem;
-  border: 2px solid var(--serve);
-  background: #14100a;
-  color: var(--serve);
+  border: 2px solid var(--swap);
+  background: #1c0d0d;
+  color: var(--swap);
   font-size: 0.85rem;
   font-weight: 700;
   line-height: 1.1;
