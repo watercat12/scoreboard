@@ -1,4 +1,6 @@
 import type {
+  AppState,
+  GameRecord,
   GameState,
   MatchState,
   Player,
@@ -9,6 +11,8 @@ import type {
 } from "./types";
 
 export const TEAM_IDS: TeamId[] = ["A", "B"];
+
+export const TEAM_LABELS: Record<TeamId, string> = { A: "Đội A", B: "Đội B" };
 
 const DEFAULT_NAMES: TeamNames = { A: ["A1", "A2"], B: ["B1", "B2"] };
 
@@ -187,4 +191,70 @@ export function undo(game: GameState): GameState {
   if (game.past.length === 0) return game;
   const past = game.past.slice(0, -1);
   return { present: game.past[game.past.length - 1], past };
+}
+
+export function createApp(names?: Partial<TeamNames>): AppState {
+  return { game: createMatch(names), history: [] };
+}
+
+export function freshMatch(source: MatchState): MatchState {
+  const next = cloneMatch(source);
+  next.score = { A: 0, B: 0 };
+  next.servingTeam = null;
+  return next;
+}
+
+function makeRecordId(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+export function toRecord(match: MatchState, now: number = Date.now()): GameRecord {
+  const { A, B } = match.score;
+  const winner: TeamId | null = A === B ? null : A > B ? "A" : "B";
+  return {
+    id: makeRecordId(),
+    finishedAt: now,
+    score: { A, B },
+    teams: {
+      A: {
+        name: TEAM_LABELS.A,
+        players: [
+          match.teams.A.players[0].name,
+          match.teams.A.players[1].name,
+        ],
+      },
+      B: {
+        name: TEAM_LABELS.B,
+        players: [
+          match.teams.B.players[0].name,
+          match.teams.B.players[1].name,
+        ],
+      },
+    },
+    winner,
+  };
+}
+
+export function finishGame(app: AppState): AppState {
+  const { A, B } = app.game.present.score;
+  if (A === 0 && B === 0) return app;
+  const record = toRecord(app.game.present);
+  return {
+    game: { present: freshMatch(app.game.present), past: [] },
+    history: [record, ...app.history],
+  };
+}
+
+export function deleteRecord(app: AppState, id: string): AppState {
+  const history = app.history.filter((record) => record.id !== id);
+  if (history.length === app.history.length) return app;
+  return { game: app.game, history };
+}
+
+export function clearHistory(app: AppState): AppState {
+  if (app.history.length === 0) return app;
+  return { game: app.game, history: [] };
 }

@@ -29,6 +29,24 @@ export interface GameState {
   past: MatchState[];
 }
 
+export interface GameRecordTeam {
+  name: string;
+  players: [string, string];
+}
+
+export interface GameRecord {
+  id: string;
+  finishedAt: number;
+  score: Record<TeamId, number>;
+  teams: Record<TeamId, GameRecordTeam>;
+  winner: TeamId | null;
+}
+
+export interface AppState {
+  game: GameState;
+  history: GameRecord[];
+}
+
 export interface TeamNames {
   A: [string, string];
   B: [string, string];

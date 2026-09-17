@@ -4,18 +4,24 @@ import {
   beginEdit,
   canUndo,
   changeSides,
+  clearHistory,
+  createApp,
   createMatch,
+  deleteRecord,
   endEdit,
   findPlayer,
+  finishGame,
+  freshMatch,
   renamePlayer,
   servePlayer,
   serverCourt,
   swapPlayers,
   tapTeam,
+  toRecord,
   undo,
   visibleSlot,
 } from "./engine";
-import type { GameState } from "./types";
+import type { AppState, GameState } from "./types";
 
 function tap(game: GameState, team: "A" | "B", times = 1): GameState {
   let next = game;
@@ -263,3 +269,127 @@ describe("undo (2.8)", () => {
     expect(undo(base)).toBe(base);
   });
 });
+
+describe("fresh match (1.2)", () => {
+  it("resets score and serving team but preserves names, courts and sides", () => {
+    let game = tap(createMatch(), "A");
+    game = tap(game, "A", 3);
+    game = changeSides(game);
+    game = swapPlayers(game, "B");
+    const before = game.present;
+
+    const fresh = freshMatch(before);
+    expect(fresh.score).toEqual({ A: 0, B: 0 });
+    expect(fresh.servingTeam).toBeNull();
+    expect(fresh.sides).toEqual(before.sides);
+    expect(fresh.teams.A.players.map((p) => p.name)).toEqual(
+      before.teams.A.players.map((p) => p.name),
+    );
+    expect(fresh.teams.A.players.map((p) => p.serviceCourt)).toEqual(
+      before.teams.A.players.map((p) => p.serviceCourt),
+    );
+    expect(fresh.teams.B.players.map((p) => p.serviceCourt)).toEqual(
+      before.teams.B.players.map((p) => p.serviceCourt),
+    );
+  });
+});
+
+describe("toRecord (1.3)", () => {
+  it("captures final score, snapshot names and derived winner", () => {
+    let game = tap(createMatch({ A: ["Nam", "Long"], B: ["Huy", "Tuan"] }), "A");
+    game = tap(game, "A", 3);
+    game = renamePlayer(game, "A1", "Renamed");
+    const record = toRecord(game.present, 1000);
+    expect(record.finishedAt).toBe(1000);
+    expect(record.score).toEqual({ A: 3, B: 0 });
+    expect(record.winner).toBe("A");
+    expect(record.teams.A.name).toBe("Đội A");
+    expect(record.teams.A.players).toEqual(["Renamed", "Long"]);
+    expect(record.teams.B.players).toEqual(["Huy", "Tuan"]);
+    expect(typeof record.id).toBe("string");
+    expect(record.id.length).toBeGreaterThan(0);
+  });
+
+  it("reports no winner on a tie", () => {
+    let game = tap(createMatch(), "A");
+    game = tap(game, "A");
+    game = tap(game, "B");
+    expect(toRecord(game.present).winner).toBeNull();
+  });
+});
+
+describe("finishGame (1.4)", () => {
+  it("records the game and starts a fresh one with empty undo stack", () => {
+    let app = createApp();
+    app = { game: tap(tap(app.game, "A"), "A"), history: [] };
+    const recordScore = { ...app.game.present.score };
+
+    const next = finishGame(app);
+    expect(next.history).toHaveLength(1);
+    expect(next.history[0].score).toEqual(recordScore);
+    expect(next.game.present.score).toEqual({ A: 0, B: 0 });
+    expect(next.game.present.servingTeam).toBeNull();
+    expect(next.game.past).toEqual([]);
+  });
+
+  it("prepends newer records first", () => {
+    let app = createApp();
+    app = finishGame({ game: tap(tap(app.game, "A"), "A"), history: [] });
+    app = finishGame({ game: tap(tap(app.game, "B"), "B"), history: app.history });
+    expect(app.history).toHaveLength(2);
+    expect(app.history[0].score).toEqual({ A: 0, B: 1 });
+    expect(app.history[1].score).toEqual({ A: 1, B: 0 });
+  });
+
+  it("is a no-op at 0:0", () => {
+    const app = createApp();
+    expect(finishGame(app)).toBe(app);
+  });
+});
+
+describe("history deletion (1.5)", () => {
+  function appWithHistory(): AppState {
+    let app = createApp();
+    app = finishGame({ game: tap(tap(app.game, "A"), "A"), history: [] });
+    app = finishGame({
+      game: tap(tap(app.game, "B"), "B"),
+      history: app.history,
+    });
+    return app;
+  }
+
+  it("deleteRecord removes only the given record and leaves game untouched", () => {
+    const app = appWithHistory();
+    const target = app.history[0];
+    const gameBefore = app.game;
+
+    const next = deleteRecord(app, target.id);
+    expect(next.history).toHaveLength(1);
+    expect(next.history.find((r) => r.id === target.id)).toBeUndefined();
+    expect(next.game).toBe(gameBefore);
+    expect(next.game.past).toEqual([]);
+  });
+
+  it("clearHistory empties history and leaves game untouched", () => {
+    const app = appWithHistory();
+    const gameBefore = app.game;
+    const next = clearHistory(app);
+    expect(next.history).toEqual([]);
+    expect(next.game).toBe(gameBefore);
+  });
+});
+
+describe("undo boundary (5.3)", () => {
+  it("does not cross an ended game", () => {
+    let app = createApp();
+    app = finishGame({ game: tap(tap(app.game, "A"), "A"), history: [] });
+    const fresh = app.game.present;
+
+    const afterUndo = { game: undo(app.game), history: app.history };
+    expect(afterUndo.game.present).toEqual(fresh);
+    expect(afterUndo.game.past).toEqual([]);
+    expect(afterUndo.history).toHaveLength(1);
+  });
+});
+
+

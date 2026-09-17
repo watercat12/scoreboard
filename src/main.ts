@@ -4,8 +4,10 @@ import {
   beginEdit,
   canUndo,
   changeSides,
-  createMatch,
+  clearHistory,
+  deleteRecord,
   endEdit,
+  finishGame,
   servePlayer,
   swapPlayers,
   tapTeam,
@@ -13,16 +15,19 @@ import {
   visibleSlot,
 } from "./engine";
 import type { EditSession } from "./engine";
-import type { GameState, MatchState, Player, TeamId } from "./types";
+import { load, save } from "./persistence";
+import type { AppState, GameRecord, GameState, MatchState, Player, TeamId } from "./types";
 
 const teamNames: Record<TeamId, string> = { A: "Đội A", B: "Đội B" };
 
-let game: GameState = createMatch();
+let app: AppState = load();
+let game: GameState = app.game;
 let edit: EditSession | null = null;
+let historyOpen = false;
 
-const app = document.querySelector<HTMLDivElement>("#app");
-if (!app) throw new Error("Missing #app root");
-const root: HTMLDivElement = app;
+const appRoot = document.querySelector<HTMLDivElement>("#app");
+if (!appRoot) throw new Error("Missing #app root");
+const root: HTMLDivElement = appRoot;
 
 function slotFor(match: MatchState, team: TeamId, player: Player): string {
   const server = servePlayer(match, team);
@@ -74,8 +79,62 @@ function escapeAttr(value: string): string {
   return escapeHtml(value);
 }
 
+function isScored(match: MatchState): boolean {
+  return match.score.A > 0 || match.score.B > 0;
+}
+
+function formatTime(finishedAt: number): string {
+  return new Date(finishedAt).toLocaleString("vi-VN");
+}
+
+function recordHtml(record: GameRecord): string {
+  const winnerText =
+    record.winner === null
+      ? "Hòa"
+      : `${record.teams[record.winner].name} thắng`;
+  return `
+    <li class="record">
+      <div class="record-head">
+        <span class="record-score">${record.score.A} - ${record.score.B}</span>
+        <span class="record-winner">${escapeHtml(winnerText)}</span>
+      </div>
+      <div class="record-teams">
+        <span>${escapeHtml(record.teams.A.name)}: ${record.teams.A.players.map(escapeHtml).join(", ")}</span>
+        <span>${escapeHtml(record.teams.B.name)}: ${record.teams.B.players.map(escapeHtml).join(", ")}</span>
+      </div>
+      <div class="record-foot">
+        <span class="record-time">${escapeHtml(formatTime(record.finishedAt))}</span>
+        <button class="record-delete" data-role="delete-record" data-record="${record.id}" type="button">Xóa</button>
+      </div>
+    </li>`;
+}
+
+function historyHtml(): string {
+  if (!historyOpen) return "";
+  const records = app.history;
+  const body =
+    records.length === 0
+      ? `<p class="history-empty">Chưa có ván nào kết thúc</p>`
+      : `<ul class="record-list">${records.map(recordHtml).join("")}</ul>`;
+  return `
+    <div class="history" data-role="history-panel">
+      <div class="history-card" data-role="history-card">
+        <div class="history-head">
+          <h2>Lịch sử ván đấu</h2>
+          <button class="history-close" data-role="close-history" type="button">Đóng</button>
+        </div>
+        ${body}
+        ${
+          records.length > 0
+            ? `<button class="history-clear" data-role="clear-history" type="button">Xóa tất cả</button>`
+            : ""
+        }
+      </div>
+    </div>`;
+}
+
 function render(): void {
-  const match = game.present;
+  const match = app.game.present;
   const leftTeam: TeamId = match.sides.A === "left" ? "A" : "B";
   const rightTeam: TeamId = leftTeam === "A" ? "B" : "A";
   const hint =
@@ -94,8 +153,11 @@ function render(): void {
       </div>
       <div class="toolbar">
         <div class="hint">${hint}</div>
-        <button data-role="undo" type="button" ${canUndo(game) ? "" : "disabled"}>Hoàn tác</button>
+        <button data-role="history" type="button">Lịch sử</button>
+        <button data-role="undo" type="button" ${canUndo(app.game) ? "" : "disabled"}>Hoàn tác</button>
+        <button class="end-game" data-role="end-game" type="button" ${isScored(match) ? "" : "disabled"}>Kết thúc</button>
       </div>
+      ${historyHtml()}
     </div>`;
 
   if (edit) {
@@ -107,9 +169,15 @@ function render(): void {
   }
 }
 
-function commit(next: GameState): void {
-  game = next;
+function commit(nextApp: AppState): void {
+  app = nextApp;
+  game = app.game;
+  save(app);
   render();
+}
+
+function commitGame(nextGame: GameState): void {
+  commit({ game: nextGame, history: app.history });
 }
 
 root.addEventListener("click", (event) => {
@@ -122,20 +190,54 @@ root.addEventListener("click", (event) => {
 
   if (action === "name-input") return;
 
+  if (action === "history") {
+    if (edit) finishEdit();
+    historyOpen = true;
+    render();
+    return;
+  }
+
+  if (action === "close-history") {
+    historyOpen = false;
+    render();
+    return;
+  }
+
+  if (action === "delete-record") {
+    const id = role.dataset.record;
+    if (id) commit(deleteRecord(app, id));
+    return;
+  }
+
+  if (action === "clear-history") {
+    if (window.confirm("Xóa toàn bộ lịch sử ván đấu?")) {
+      commit(clearHistory(app));
+    }
+    return;
+  }
+
+  if (historyOpen) return;
+
   if (edit && action !== "slot") {
     finishEdit();
   }
 
   switch (action) {
     case "side-change":
-      commit(changeSides(game));
+      commitGame(changeSides(app.game));
       return;
     case "undo":
-      commit(undo(game));
+      commitGame(undo(app.game));
+      return;
+    case "end-game":
+      if (!isScored(app.game.present)) return;
+      if (window.confirm("Kết thúc ván này và bắt đầu ván mới?")) {
+        commit(finishGame(app));
+      }
       return;
     case "swap": {
       const team = role.dataset.team as TeamId | undefined;
-      if (team) commit(swapPlayers(game, team));
+      if (team) commitGame(swapPlayers(app.game, team));
       return;
     }
     case "slot": {
@@ -145,7 +247,7 @@ root.addEventListener("click", (event) => {
     }
     case "court": {
       const team = role.dataset.team as TeamId | undefined;
-      if (team) commit(tapTeam(game, team));
+      if (team) commitGame(tapTeam(app.game, team));
       return;
     }
     default:
@@ -154,25 +256,27 @@ root.addEventListener("click", (event) => {
 });
 
 function startEdit(playerId: string): void {
-  edit = beginEdit(game, playerId);
+  edit = beginEdit(app.game, playerId);
   render();
 }
 
 function finishEdit(): void {
   if (!edit) return;
-  const input = app?.querySelector<HTMLInputElement>('[data-role="name-input"]');
+  const input = appRoot?.querySelector<HTMLInputElement>('[data-role="name-input"]');
+  let nextGame = app.game;
   if (input) {
-    game = applyEdit(game, edit, input.value);
+    nextGame = applyEdit(nextGame, edit, input.value);
   }
-  game = endEdit(game, edit);
+  nextGame = endEdit(nextGame, edit);
   edit = null;
-  render();
+  commitGame(nextGame);
 }
 
 root.addEventListener("input", (event) => {
   const input = event.target as HTMLInputElement | null;
   if (!input || input.dataset.role !== "name-input" || !edit) return;
-  game = applyEdit(game, edit, input.value);
+  game = applyEdit(app.game, edit, input.value);
+  app = { game, history: app.history };
 });
 
 root.addEventListener("keydown", (event) => {
