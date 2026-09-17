@@ -38,13 +38,25 @@ npm run preview    # xem thử bản build
 
 ## Triển khai lên Cloudflare Pages
 
+Ứng dụng là trang tĩnh hoàn toàn, không cần backend hay biến môi trường.
+
+### Deploy bằng Wrangler CLI
+
+```bash
+npx wrangler login    # đăng nhập Cloudflare (một lần)
+npm run deploy        # build rồi deploy lên Pages
+```
+
+Lần chạy đầu tiên, Wrangler sẽ hỏi tạo project Pages mới; sau đó cấu hình đã có
+sẵn trong `wrangler.toml` (`name`, `pages_build_output_dir = "dist"`).
+
+### Deploy qua Git integration
+
 1. Kết nối repository với Cloudflare Pages.
 2. Cấu hình build:
    - **Build command:** `npm run build`
    - **Build output directory:** `dist`
 3. Node version: 20 trở lên (khuyến nghị 22).
-
-Ứng dụng là trang tĩnh hoàn toàn, không cần backend hay biến môi trường.
 
 ## Kiến trúc
 
